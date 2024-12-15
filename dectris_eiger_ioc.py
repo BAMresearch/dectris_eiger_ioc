@@ -111,10 +111,13 @@ class DEigerIOC(PVGroup):
         self.client.setDetectorConfig("frame_time", self.FrameTime.value)
         self._nframes = int(np.ceil(self.CountTime.value / self.FrameTime.value))
         self.client.setDetectorConfig("nimages",self._nframes)
+        self.client.setDetectorConfig("ntrigger", 1) # one trigger per sequence. (trigger_mode = ints)
+        self.client.setDetectorConfig("trigger_mode","ints") # as seen in the dectris example notebook
 
     def set_filewriter_config(self):
-        self.client.setFileWriterConfig("mode", "enabled")
+        self.client.setFileWriterConfig("mode", "enabled") # write HDF5 files
         self.client.setFileWriterConfig("name_pattern", f"{self.OutputFilePrefix.value}$id")
+        self.client.setDetectorConfig("nimages_per_file", 1800) # maximum 1800 frames per file
         self.client.fileWriterConfig("compression_enabled")
         self.client.setDetectorConfig("compression", "bslz4")
     
@@ -132,7 +135,9 @@ class DEigerIOC(PVGroup):
         self.set_timing_values()
         self.empty_data_store()
         self.set_filewriter_config()
-        self.client.setDetectorConfig("trigger_mode","ints") # as seen in the dectris example notebook
+        self.client.setDetectorConfig("countrate_correction_applied", self.CountRateCorrection.value)
+        self.client.setDetectorConfig("flatfield_correction_applied", self.FlatFieldCorrection.value)
+        self.client.setDetectorConfig("pixel_mask_applied]", self.PixelMaskCorrection.value)        
 
     def read_detector_configuration_safely(self, key:str="", default=None):
         """ reads the detector configuration of a particular key and returns it as a dictionary. Safely handles errors"""
@@ -172,12 +177,13 @@ class DEigerIOC(PVGroup):
     FrameTime_RBV = pvproperty(doc="Gets the actual frame time from the detector", dtype=float, record='ai')
 
     # settables for the detector
-    EnergyThreshold = pvproperty(doc="Sets the energy threshold on the detector, normally 0.5 * PhotonEnergy", dtype=float, record='ao')
+    EnergyThreshold = pvproperty(value = 4025, doc="Sets the energy threshold on the detector, normally 0.5 * PhotonEnergy", dtype=float, record='ao')
     PhotonEnergy = pvproperty(value = 8050, doc="Sets the photon energy on the detector", dtype=int, record='ai')
     FrameTime = pvproperty(doc="Sets the frame time on the detector. nominally should be <= CountTime", dtype=float, record='ai')
     CountTime = pvproperty(doc="Sets the total exposure time the detector", dtype=float, record='ai')
     CountRateCorrection = pvproperty(doc="do you want count rate correction applied by the detector (using int maths)", dtype=bool, record='bo')
     FlatFieldCorrection = pvproperty(doc="do you want flat field correction applied by the detector (using int maths)", dtype=bool, record='bo')
+    PixelMaskCorrection = pvproperty(doc="do you want pixel mask correction applied by the detector", dtype=bool, record='bo')
 
     # operating the detector
     Initialize: bool = pvproperty(doc="Initialize the detector, resets to False immediately", dtype=bool, record='bo')
@@ -252,8 +258,8 @@ class DEigerIOC(PVGroup):
             await self.Trigger.write(False)
             self._starttime = datetime.now(timezone.utc)
             self.client.sendDetectorCommand("arm")
-            # TODO: check if this works:
-            await self.client.sendDetectorCommand("trigger")
+            # TODO: check if this works. Should be a blocking operation, so I hope the rest of the IOC will work fine in the mean time
+            self.client.sendDetectorCommand("trigger") # can this be done with await? it's not an async function...
             self.client.sendDetectorCommand("disarm")
             self.retrieve_all_and_clear_files()
 
