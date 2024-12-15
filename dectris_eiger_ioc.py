@@ -16,6 +16,12 @@ import logging
 logger = logging.getLogger("DEigerIOC")
 logger.setLevel(logging.INFO)
 
+# Define a base custom operation class
+class CustomPostExposureOperation:
+    def execute(self, ioc_instance: 'DEigerIOC'):
+        # Default no-op implementation. If you need anything special done after data collecion is complete, put that here. 
+        pass
+
 # Validators for IP and Port
 def validate_ip_address(instance, attribute, value):
     try:
@@ -75,6 +81,8 @@ class DEigerIOC(PVGroup):
     _nframes: int = attrs.field(default=1, validator=attrs.validators.optional(attrs.validators.instance_of(int)))
     # start time of the exposure
     _starttime: datetime = attrs.field(default=datetime.now(timezone.utc), validator=attrs.validators.optional(attrs.validators.instance_of(datetime)))
+    # for any location-specific operations that need to be performed after data collection
+    custom_post_exposure_operation: CustomPostExposureOperation = attrs.field(factory=CustomPostExposureOperation)
 
     def __init__(self, *args, **kwargs) -> None:
         for k in list(kwargs.keys()):
@@ -124,8 +132,7 @@ class DEigerIOC(PVGroup):
         self.set_timing_values()
         self.empty_data_store()
         self.set_filewriter_config()
-
-        self.client.setDetectorConfig("trigger_mode","ints")
+        self.client.setDetectorConfig("trigger_mode","ints") # as seen in the dectris example notebook
 
     def read_detector_configuration_safely(self, key:str="", default=None):
         """ reads the detector configuration of a particular key and returns it as a dictionary. Safely handles errors"""
@@ -147,6 +154,10 @@ class DEigerIOC(PVGroup):
                 continue # skip if file already exists or is one we're not looking for
             self.client.FileWriterSave(filename, self.LocalFileDumpPath)
             self.LatestFile=str(filename)
+            if 'master' in filename:
+                self.LatestFileMain=str(filename)
+            elif 'data' in filename:
+                self.LatestFileData=str(filename)
 
     def retrieve_all_and_clear_files(self):
         """ retrieves all files from the data store and clears the data store"""
@@ -174,6 +185,8 @@ class DEigerIOC(PVGroup):
     Trigger_RBV: bool = pvproperty(doc="True while the detector capture subroutine in the IOC is busy", dtype=bool, record='bo')
     OutputFilePrefix = pvproperty(value="eiger_", doc="Set the prefix of the main and data output files", dtype=str, record='stringin')
     LatestFile = pvproperty(doc="Shows the name of the latest output file retrieved", dtype=str, record='stringin')
+    LatestFileData = pvproperty(doc="Shows the name of the latest output data file retrieved", dtype=str, record='stringin')
+    LatestFileMain = pvproperty(doc="Shows the name of the latest output main file retrieved", dtype=str, record='stringin')
     SecondsRemaining = pvproperty(doc="Shows the seconds remaining for the current exposure", dtype=int, record='longin')
     FileScanner = pvproperty(doc="Scans the data store for new files and dumps them to disk", dtype=bool, record='bo')
 
@@ -243,6 +256,7 @@ class DEigerIOC(PVGroup):
             await self.client.sendDetectorCommand("trigger")
             self.client.sendDetectorCommand("disarm")
             self.retrieve_all_and_clear_files()
+
             await self.Trigger_RBV.write(False)
             
 
