@@ -177,23 +177,23 @@ class DEigerIOC(PVGroup):
     SecondsRemaining = pvproperty(doc="Shows the seconds remaining for the current exposure", dtype=int, record='longin')
     FileScanner = pvproperty(doc="Scans the data store for new files and dumps them to disk", dtype=bool, record='bo')
 
-    @FileScanner.scan(period=1, use_scan_field=True)
+    @FileScanner.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def FileScanner(self, instance, async_lib):
         self.read_and_dump_files()
 
-    @DetectorState.scan(use_scan_field=True)
+    @DetectorState.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def DetectorState(self, instance, async_lib):
         await self.DetectorState.write(self.read_detector_configuration_safely("state", "unknown"))
 
-    @DetectorTemperature.scan(use_scan_field=True)
+    @DetectorTemperature.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def DetectorTemperature(self, instance, async_lib):
         await self.DetectorTemperature.write(float(self.read_detector_configuration_safely("temperature", -999.0)))
 
-    @DetectorTime.scan(use_scan_field=True)
+    @DetectorTime.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def DetectorTime(self, instance, async_lib):
         await self.DetectorTime.write(self.read_detector_configuration_safely("time", "unknown"))
 
-    @SecondsRemaining.scan(use_scan_field=True)
+    @SecondsRemaining.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def SecondsRemaining(self, instance, async_lib):
         if self._starttime is not None:
             elapsed = datetime.now(timezone.utc) - self._starttime
@@ -245,15 +245,6 @@ class DEigerIOC(PVGroup):
             self.retrieve_all_and_clear_files()
             await self.Trigger_RBV.write(False)
             
-    # do0 = pvproperty(name="do0", doc="Digital output 0, can be 0 or 1", dtype=bool, record='bi')
-    # do0_RBV = pvproperty(name="do0_RBV", doc="Readback value for digital output 0", dtype=bool, record='bi')
-    # @do0.putter
-    # async def do0(self, instance, value: bool):
-    #     self.client.write("DO", 0, value)
-    # @do0.scan(period=6, use_scan_field=True)
-    # async def do0(self, instance: ChannelData, async_lib: AsyncLibraryLayer):
-    #     await self.do0_RBV.write(self.client.read("DO", 0))
-
 
 def main(args=None):
     parser, split_args = template_arg_parser(
