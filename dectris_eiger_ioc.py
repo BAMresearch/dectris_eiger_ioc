@@ -1,48 +1,21 @@
 
 import logging
 from pathlib import Path
-import socket
 import sys
 import attrs
 from datetime import datetime, timezone
-from caproto.server import PVGroup, pvproperty, PvpropertyString, run, template_arg_parser, AsyncLibraryLayer
-from caproto import ChannelData
+from caproto.server import PVGroup, pvproperty, template_arg_parser, run
 import numpy as np
 from deigerclient import DEigerClient
 import os 
+from validators import validate_ip_address, validate_port_number, ensure_directory_exists_and_is_writeable
+from custom_operations import CustomPostExposureOperation
 
 import logging
 
 logger = logging.getLogger("DEigerIOC")
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.INFO)
 
-# Define a base custom operation class
-class CustomPostExposureOperation:
-    def execute(self, ioc_instance: 'DEigerIOC'):
-        # Default no-op implementation. If you need anything special done after data collecion is complete, put that here. 
-        pass
-
-# Validators for IP and Port
-def validate_ip_address(instance, attribute, value):
-    try:
-        socket.inet_aton(value)
-    except socket.error:
-        raise ValueError(f"Invalid IP address: {value}")
-
-
-def validate_port_number(instance, attribute, value):
-    if not (0 <= value <= 65535):
-        raise ValueError(f"Port number must be between 0 and 65535, got {value}")
-
-def ensure_directory_exists_and_is_writeable(instance, attribute, value):
-    path = Path(value)
-    path.mkdir(parents=True, exist_ok=True)  # Create the directory if it doesn't exist
-
-    if not path.is_dir():
-        raise ValueError(f"The directory '{value}' does not exist.")
-    if not os.access(path, os.W_OK):
-        raise ValueError(f"The directory '{value}' is not writable.")
-    
 @attrs.define
 class DEigerIOC(PVGroup):
     """
@@ -267,7 +240,6 @@ class DEigerIOC(PVGroup):
 
             await self.Trigger_RBV.write(False)
             
-
 def main(args=None):
     parser, split_args = template_arg_parser(
         default_prefix="detector_eiger:",
