@@ -43,6 +43,9 @@ class DEigerIOC(PVGroup):
         configure_detector: Runs required initializations before a measurement.
         read_detector_configuration_safely: Reads detector configuration safely while handling errors.
 
+    authors: Brian R. Pauw, Anja Hörmann. 
+    DEigerClient from Dectris
+    License: MIT    
     """
 
     host: str = attrs.field(default="172.17.1.2", validator=validate_ip_address, converter=str)
