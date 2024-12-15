@@ -64,6 +64,7 @@ class DEigerIOC(PVGroup):
         for k in list(kwargs.keys()):
             if k in ['host', 'port']:
                 setattr(self, k, kwargs.pop(k))
+        self.LocalFileDumpPath = kwargs.pop('localPath', Path("/tmp"))
         self.client = DEigerClient(self.host, port=self.port)
         super().__init__(*args, **kwargs)
 
@@ -253,8 +254,8 @@ def main(args=None):
         args = sys.argv[1:]
 
     parser.add_argument("--host", required=True, type=str, help="IP address of the host/device")
-    parser.add_argument("--port", required=True, type=int, help="Port number of the device")
-    parser.add_argument("--local-file-dump-path", type=Path, default=Path("/tmp"),
+    parser.add_argument("--port", type=int, default=80, help="Port number of the device")
+    parser.add_argument("--localPath", "-L", type=Path, default=Path("/tmp"),
                     help="Path where the detector files are stored locally")
 
     args = parser.parse_args()
@@ -263,10 +264,7 @@ def main(args=None):
 
     ioc_options, run_options = split_args(args)
 
-    # Remove local_file_dump_path from ioc_options if not needed further
-    ioc_options.pop('local_file_dump_path', None)
-
-    ioc = DEigerIOC(host=args.host, port=args.port, LocalFileDumpPath=args.local_file_dump_path, **ioc_options)
+    ioc = DEigerIOC(host=args.host, port=args.port, **ioc_options)
     run(ioc.pvdb, **run_options)
 
 
