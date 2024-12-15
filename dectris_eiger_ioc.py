@@ -1,5 +1,6 @@
 
 import logging
+from pathlib import Path
 import socket
 import sys
 import attrs
@@ -8,6 +9,7 @@ from caproto.server import PVGroup, pvproperty, PvpropertyString, run, template_
 from caproto import ChannelData
 import numpy as np
 from deigerclient import DEigerClient
+import os 
 
 import logging
 
@@ -26,15 +28,50 @@ def validate_port_number(instance, attribute, value):
     if not (0 <= value <= 65535):
         raise ValueError(f"Port number must be between 0 and 65535, got {value}")
 
+def ensure_directory_exists_and_is_writeable(instance, attribute, value):
+    path = Path(value)
+    path.mkdir(parents=True, exist_ok=True)  # Create the directory if it doesn't exist
 
+    if not path.is_dir():
+        raise ValueError(f"The directory '{value}' does not exist.")
+    if not os.access(path, os.W_OK):
+        raise ValueError(f"The directory '{value}' is not writable.")
+    
 @attrs.define
 class DEigerIOC(PVGroup):
-    host: str = attrs.field(default="172.17.1.124", validator=validate_ip_address, converter=str)
-    port: int = attrs.field(default=502, validator=validate_port_number, converter=int)
+    """
+    A caproto-based IOC (Input/Output Controller) for managing Dectris Eiger detectors.
+
+    This class facilitates setting, triggering, and collecting data from Dectris Eiger detectors.
+    It integrates network configuration, data handling, and detector management by wrapping
+    various detector functionalities including energy values, timing configuration, and file writing.
+
+    Attributes:
+        host (str): IP address of the detector.
+        port (int): Port number for the detector connection.
+        client (DEigerClient): Client interface for communicating with the detector.
+        LocalFileDumpPath (Path): Path where the detector files are stored locally.
+        _nframes (int): Number of frames to be taken in a single exposure.
+        _starttime (datetime): Start time of the exposure.
+        
+    Methods:
+        empty_data_store: Clears the detector's data store.
+        restart_and_initialize_detector: Restarts and initializes the detector.
+        set_energy_values: Sets photon energy and energy threshold values.
+        set_timing_values: Configures count time and frame time for the detector.
+        set_filewriter_config: Enables and configures the file writer for data output.
+        set_monitor_and_stream_config: Configures monitor and stream settings.
+        configure_detector: Runs required initializations before a measurement.
+        read_detector_configuration_safely: Reads detector configuration safely while handling errors.
+
+    """
+
+    host: str = attrs.field(default="172.17.1.2", validator=validate_ip_address, converter=str)
+    port: int = attrs.field(default=80, validator=validate_port_number, converter=int)
     client: DEigerClient = attrs.field(init=False, validator=attrs.validators.optional(attrs.validators.instance_of(DEigerClient)))
-    # sets hdf5 compression on storage
-    compression: str = attrs.field(default="gzip", validator=attrs.validators.optional(attrs.validators.instance_of(str)))
-    compressionlevel: int = attrs.field(default=5, validator=attrs.validators.optional(attrs.validators.instance_of(int)))    
+    # files measured on the detector are stored here. 
+    LocalFileDumpPath: Path = attrs.field(default=Path("/tmp"), validator=[attrs.validators.instance_of(Path), ensure_directory_exists_and_is_writeable])
+    # number of frames to be taken in a single exposure
     _nframes: int = attrs.field(default=1, validator=attrs.validators.optional(attrs.validators.instance_of(int)))
     # start time of the exposure
     _starttime: datetime = attrs.field(default=datetime.now(timezone.utc), validator=attrs.validators.optional(attrs.validators.instance_of(datetime)))
@@ -43,7 +80,7 @@ class DEigerIOC(PVGroup):
         for k in list(kwargs.keys()):
             if k in ['host', 'port']:
                 setattr(self, k, kwargs.pop(k))
-        self.client = DEigerClient(self.host, self.port)
+        self.client = DEigerClient(self.host, port=self.port)
         super().__init__(*args, **kwargs)
 
     def empty_data_store(self):
@@ -101,25 +138,48 @@ class DEigerIOC(PVGroup):
         except:
             return default
 
-    # PVs
-    # PVs for the detector
+    def read_and_dump_files(self):
+        """ reads all files in the data store and dumps them to disk at the location specified upon IOC init"""
+        # TODO: check how this writes files during measurememnt - does it update as files are created, or does it create files only on completion?
+        filenames = self.client.fileWriterFiles()['value'] # returns all files in datastore
+        for filename in filenames:
+            if filename in os.listdir(self.LocalFileDumpPath) or not filename.startswith(self.OutputFilePrefix.value):
+                continue # skip if file already exists or is one we're not looking for
+            self.client.FileWriterSave(filename, self.LocalFileDumpPath)
+            self.LatestFile=str(filename)
+
+    def retrieve_all_and_clear_files(self):
+        """ retrieves all files from the data store and clears the data store"""
+        self.read_and_dump_files()
+        self.empty_data_store()
+
+    # Detector state readouts
     DetectorState = pvproperty(doc="State of the detector, can be 'busy' or 'idle'", dtype=str, record='stringin')
     DetectorTemperature = pvproperty(doc="Temperature of the detector", dtype=float, record='ai')
     DetectorTime = pvproperty(doc="Timestamp on the detector", dtype=str, record='stringin')
+    CountTime_RBV = pvproperty(doc="Gets the actual total exposure time the detector", dtype=float, record='ai')
+    FrameTime_RBV = pvproperty(doc="Gets the actual frame time from the detector", dtype=float, record='ai')
+
+    # settables for the detector
     EnergyThreshold = pvproperty(doc="Sets the energy threshold on the detector, normally 0.5 * PhotonEnergy", dtype=float, record='ao')
     PhotonEnergy = pvproperty(value = 8050, doc="Sets the photon energy on the detector", dtype=int, record='ai')
     FrameTime = pvproperty(doc="Sets the frame time on the detector. nominally should be <= CountTime", dtype=float, record='ai')
     CountTime = pvproperty(doc="Sets the total exposure time the detector", dtype=float, record='ai')
-    CountTime_RBV = pvproperty(doc="Gets the actual total exposure time the detector", dtype=float, record='ai')
     CountRateCorrection = pvproperty(doc="do you want count rate correction applied by the detector (using int maths)", dtype=bool, record='bo')
     FlatFieldCorrection = pvproperty(doc="do you want flat field correction applied by the detector (using int maths)", dtype=bool, record='bo')
+
+    # operating the detector
     Initialize: bool = pvproperty(doc="Initialize the detector, resets to False immediately", dtype=bool, record='bo')
     Trigger: bool = pvproperty(doc="Trigger the detector to take an image, resets to False immediately. Adjusts detector_state to 'busy' for the duration of the measurement.", dtype=bool, record='bo')
+    Trigger_RBV: bool = pvproperty(doc="True while the detector capture subroutine in the IOC is busy", dtype=bool, record='bo')
     OutputFilePrefix = pvproperty(value="eiger_", doc="Set the prefix of the main and data output files", dtype=str, record='stringin')
-    OutputFileMain = pvproperty(doc="Shows the name of the latest main output file", dtype=str, record='stringin')
-    OutputFileData = pvproperty(doc="Shows the name of the latest data output file", dtype=str, record='stringin')
+    LatestFile = pvproperty(doc="Shows the name of the latest output file retrieved", dtype=str, record='stringin')
     SecondsRemaining = pvproperty(doc="Shows the seconds remaining for the current exposure", dtype=int, record='longin')
+    FileScanner = pvproperty(doc="Scans the data store for new files and dumps them to disk", dtype=bool, record='bo')
 
+    @FileScanner.scan(period=1, use_scan_field=True)
+    async def FileScanner(self, instance, async_lib):
+        self.read_and_dump_files()
 
     @DetectorState.scan(use_scan_field=True)
     async def DetectorState(self, instance, async_lib):
@@ -175,12 +235,16 @@ class DEigerIOC(PVGroup):
     @Trigger.putter
     async def Trigger(self, instance, value: bool):
         if value:
+            await self.Trigger_RBV.write(True)
+            await self.Trigger.write(False)
             self._starttime = datetime.now(timezone.utc)
             self.client.sendDetectorCommand("arm")
             # TODO: check if this works:
             await self.client.sendDetectorCommand("trigger")
             self.client.sendDetectorCommand("disarm")
-
+            self.retrieve_all_and_clear_files()
+            await self.Trigger_RBV.write(False)
+            
     # do0 = pvproperty(name="do0", doc="Digital output 0, can be 0 or 1", dtype=bool, record='bi')
     # do0_RBV = pvproperty(name="do0_RBV", doc="Readback value for digital output 0", dtype=bool, record='bi')
     # @do0.putter
@@ -202,13 +266,19 @@ def main(args=None):
 
     parser.add_argument("--host", required=True, type=str, help="IP address of the host/device")
     parser.add_argument("--port", required=True, type=int, help="Port number of the device")
+    parser.add_argument("--local-file-dump-path", type=Path, default=Path("/tmp"),
+                    help="Path where the detector files are stored locally")
 
     args = parser.parse_args()
 
     logging.info(f"Running Dectis Eiger IOC on {args}")
 
     ioc_options, run_options = split_args(args)
-    ioc = DEigerIOC(host=args.host, port=args.port, **ioc_options)
+
+    # Remove local_file_dump_path from ioc_options if not needed further
+    ioc_options.pop('local_file_dump_path', None)
+
+    ioc = DEigerIOC(host=args.host, port=args.port, LocalFileDumpPath=args.local_file_dump_path, **ioc_options)
     run(ioc.pvdb, **run_options)
 
 
