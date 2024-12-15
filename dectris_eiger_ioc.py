@@ -108,7 +108,9 @@ class DEigerIOC(PVGroup):
     def set_timing_values(self):
         """ this also sets _nframes to the correct value"""
         self.client.setDetectorConfig("count_time", self.CountTime.value)
-        self.client.setDetectorConfig("frame_time", self.FrameTime.value)
+        # don't set the frame time longer than count time.. 
+        self.client.setDetectorConfig("frame_time", np.minimum(self.FrameTime.value, self.CountTime.value))
+        # maybe something else needs to be added here to account for deadtime between frames. 
         self._nframes = int(np.ceil(self.CountTime.value / self.FrameTime.value))
         self.client.setDetectorConfig("nimages",self._nframes)
         self.client.setDetectorConfig("ntrigger", 1) # one trigger per sequence. (trigger_mode = ints)
