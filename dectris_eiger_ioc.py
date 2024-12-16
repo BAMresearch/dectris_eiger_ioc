@@ -91,7 +91,7 @@ class DEigerIOC(PVGroup):
         ntry = 5
         while self.DetectorState.value in ['na', 'error']:
             print(f'failure to initialize detector, trying again {ntry} times out of 5')
-            time.sleep(.1)
+            time.sleep(1)
             self.client.sendDetectorCommand("initialize")
             ntry -=1
             if ntry <0:
@@ -170,8 +170,8 @@ class DEigerIOC(PVGroup):
         expected_number_of_files = np.ceil(self._nframes/self._nimages_per_file)+1
         # TODO: check how this writes files during measurememnt - does it update as files are created, or does it create files only on completion?
         
-        filenames = self.client.fileWriterFiles()#['value'] # returns all files in datastore
-        ntry = 200
+        filenames = self.client.fileWriterFiles()# returns all files in datastore
+        ntry = 200 # 20 seconds...
         while not len(filenames)>=expected_number_of_files:
             time.sleep(.1)
             filenames = self.client.fileWriterFiles()#['value'] # returns all files in datastore
@@ -186,11 +186,11 @@ class DEigerIOC(PVGroup):
                 continue # skip if file already exists or is one we're not looking for
             print(f'retrieving: {filename}')
             self.client.fileWriterSave(filename, self.LocalFileDumpPath)
-            self.LatestFile=str(filename)
+            asyncio.run(self.LatestFile.write(str(filename)))
             if 'master' in filename:
-                self.LatestFileMain=str(filename)
+                asyncio.run(self.LatestFileMain.write(str(filename)))
             elif 'data' in filename:
-                self.LatestFileData=str(filename)
+                asyncio.run(self.LatestFileData.write(str(filename)))
 
     def retrieve_all_and_clear_files(self):
         """ retrieves all files from the data store and clears the data store"""
@@ -216,7 +216,7 @@ class DEigerIOC(PVGroup):
             await loop.run_in_executor(None, self.configure_detector)
 
     async def check_ready_to_trigger(self)->bool:
-        await ensure_parameters_applied()
+        await self.ensure_parameters_applied()
             
         if not self.ok_to_set_parameters():
             return False
@@ -255,9 +255,9 @@ class DEigerIOC(PVGroup):
     PixelMaskCorrection = pvproperty(value = False, doc="do you want pixel mask correction applied by the detector", record='bi')
 
     # operating the detector
-    Initialize = pvproperty(value = False, doc="Initialize the detector, resets to False immediately", dtype=bool, record='bo')
+    Initialize = pvproperty(doc="Initialize the detector, resets to False immediately", dtype=bool, record='bo')
     Initialize_RBV = pvproperty(value = False, doc="True while detector is initializing", dtype=bool, record='bo')
-    Trigger = pvproperty(value = False, doc="Trigger the detector to take an image, resets to False immediately. Adjusts detector_state to 'busy' for the duration of the measurement.", record='bi')
+    Trigger = pvproperty(doc="Trigger the detector to take an image, resets to False immediately. Adjusts detector_state to 'busy' for the duration of the measurement.", record='bi')
     Trigger_RBV = pvproperty(value = False, doc="True while the detector capture subroutine in the IOC is busy", dtype=bool, record='bo')
     OutputFilePrefix = pvproperty(value="eiger_", doc="Set the prefix of the main and data output files", dtype=str, record='stringin', report_as_string=True)
     LatestFile = pvproperty(value = '', doc="Shows the name of the latest output file retrieved", dtype=str, record='stringin', report_as_string=True)
@@ -297,28 +297,32 @@ class DEigerIOC(PVGroup):
         await self.ReadyToTrigger.write(False)
         if self.ok_to_set_parameters():
             self.set_energy_values(ThresholdEnergy = value)
-        await self.check_ready_to_trigger()
+        await self.ReadyToTrigger.write(True)
+        # await self.check_ready_to_trigger()
 
     @PhotonEnergy.putter
     async def PhotonEnergy(self, instance, value: float):
         await self.ReadyToTrigger.write(False)
         if self.ok_to_set_parameters():
             self.set_energy_values(PhotonEnergy = value)
-        await self.check_ready_to_trigger()
+        await self.ReadyToTrigger.write(True)
+        # await self.check_ready_to_trigger()
 
     @FrameTime.putter
     async def FrameTime(self, instance, value: float):
         await self.ReadyToTrigger.write(False)
         if self.ok_to_set_parameters():
             self.set_timing_values(FrameTime = value)
-        await self.check_ready_to_trigger()
+        await self.ReadyToTrigger.write(True)
+        # await self.check_ready_to_trigger()
 
     @CountTime.putter
     async def CountTime(self, instance, value: float):
         await self.ReadyToTrigger.write(False)
         if self.ok_to_set_parameters():
             self.set_timing_values(CountTime = value)    
-        await self.check_ready_to_trigger()
+        await self.ReadyToTrigger.write(True)
+        # await self.check_ready_to_trigger()
 
     @CountTime.getter
     async def CountTime(self, instance):
@@ -326,6 +330,7 @@ class DEigerIOC(PVGroup):
 
     @Initialize.putter
     async def Initialize(self, instance, value: bool):
+        value=bool(value)
         await self.ReadyToTrigger.write(False)
         if value:
             await self.Initialize_RBV.write(True)
@@ -334,11 +339,13 @@ class DEigerIOC(PVGroup):
             await loop.run_in_executor(None, self.configure_detector)
             value=False
             await self.Initialize_RBV.write(False)
-        await self.check_ready_to_trigger()
+        await self.ReadyToTrigger.write(True)
+        # await self.check_ready_to_trigger()
         # await self.Initialize.write(False)
 
     @Trigger.putter
     async def Trigger(self, instance, value: bool):
+        value=bool(value)
         if value:
             await self.Trigger_RBV.write(True)
             await self.ReadyToTrigger.write(False)
@@ -351,7 +358,8 @@ class DEigerIOC(PVGroup):
             await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
             await loop.run_in_executor(None, self.retrieve_all_and_clear_files)
             await self.Trigger_RBV.write(False)
-        await self.check_ready_to_trigger()
+        await self.ReadyToTrigger.write(True)
+        # await self.check_ready_to_trigger()
             
 def main(args=None):
     parser, split_args = template_arg_parser(
