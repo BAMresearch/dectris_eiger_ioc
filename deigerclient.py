@@ -54,7 +54,7 @@ except ImportError:
     import urllib2 as urllibRequest
 
 
-Version = '1.8.0'
+Version = '1.6.0'
 
 
 # noinspection PyInterpreter
