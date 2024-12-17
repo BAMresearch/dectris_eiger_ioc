@@ -65,6 +65,7 @@ class DEigerIOC(PVGroup):
     # if we tried writing while the detector was initializing or measuring:
     # _parameters_not_applied:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
     _detector_initialized:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
+    _detector_configured:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
 
     def __init__(self, *args, **kwargs) -> None:
         for k in list(kwargs.keys()):
@@ -82,13 +83,22 @@ class DEigerIOC(PVGroup):
         # writing of files needs to be enabled again after
         self.client.setFileWriterConfig("mode", "enabled")
 
-    def restart_and_initialize_detector(self):
-        logging.info("restarting detector")        
+    def restart_detector(self):
+        print("  restarting detector")        
         self.client.sendSystemCommand("restart")
         time.sleep(.1)
-        self.client.sendDetectorCommand("initialize")
+
+    def initialize_detector(self):
+        print("  sending init command")
+        Trouble=False
+        try:
+            self.client.sendDetectorCommand("initialize")
+            print("  finished sending init command")
+        except RuntimeError:
+            print("  Trouble initializing")
+            Trouble=True
         ntry = 5
-        while self.DetectorState.value in ['na', 'error']:
+        while (self.DetectorState.value in ['na', 'error']) or Trouble:
             print(f'failure to initialize detector, trying again {ntry} times out of 5')
             time.sleep(1)
             self.client.sendDetectorCommand("initialize")
@@ -96,6 +106,7 @@ class DEigerIOC(PVGroup):
             if ntry <0:
                 print(f'FAILURE TO INITIALIZE detector')
         self._detector_initialized = True
+        return
 
 
     def set_energy_values(self, PhotonEnergy = None, ThresholdEnergy = None):
@@ -139,11 +150,10 @@ class DEigerIOC(PVGroup):
 
     def configure_detector(self):     
         """ runs all the required detector initializations before a measurement"""   
-        # self.restart_and_initialize_detector() # not sure this is necessary every time
 
         if not self._detector_initialized:
             print('before configuring the detector, I will intialize it at least once...')
-            self.restart_and_initialize_detector()
+            self.initialize_detector()
         self.set_energy_values()
         self.set_timing_values()
         self.empty_data_store()
@@ -209,6 +219,12 @@ class DEigerIOC(PVGroup):
             if (counter % 10 == 0):
                 print('waiting for initialization to complete...')
 
+        while self.Configure_RBV.value not in ['Off', False]:
+            counter += 1
+            await asyncio.sleep(.1)
+            if (counter % 10 == 0):
+                print('waiting for configuration to complete...')
+
     # Detector state readouts
     DetectorState = pvproperty(value = '', doc="State of the detector, can be 'busy' or 'idle'", dtype=str, record='stringin',
                                report_as_string=True)
@@ -227,17 +243,21 @@ class DEigerIOC(PVGroup):
     PixelMaskCorrection = pvproperty(value = False, doc="do you want pixel mask correction applied by the detector", record='bi')
 
     # operating the detector
-    Initialize = pvproperty(doc="Initialize the detector, resets to False immediately", dtype=bool, record='bo')
-    Initialize_RBV = pvproperty(value = False, doc="True while detector is initializing", dtype=bool, record='bo')
-    Trigger = pvproperty(doc="Trigger the detector to take an image, resets to False immediately. Adjusts detector_state to 'busy' for the duration of the measurement.", record='bi')
-    Trigger_RBV = pvproperty(value = False, doc="True while the detector capture subroutine in the IOC is busy", dtype=bool, record='bo')
+    Restart = pvproperty(doc="Restart the detector, resets to False immediately", dtype=bool, record='bi')
+    Restart_RBV = pvproperty(doc="True while detector is restarting", dtype=bool, record='bo')
+    Initialize = pvproperty(doc="Initialize the detector, resets to False immediately", dtype=bool, record='bi')
+    Initialize_RBV = pvproperty(doc="True while detector is initializing", dtype=bool, record='bo')
+    Configure = pvproperty(doc="Configures the detector, resets to False immediately", dtype=bool, record='bi')
+    Configure_RBV = pvproperty(doc="True while detector is Configuring", dtype=bool, record='bo')
+    Trigger = pvproperty(doc="Trigger the detector to take an image, resets to False immediately. Adjusts detector_state to 'busy' for the duration of the measurement.", record='bi', dtype=bool)
+    Trigger_RBV = pvproperty(doc="True while the detector capture subroutine in the IOC is busy", dtype=bool, record='bo')
     OutputFilePrefix = pvproperty(value="eiger_", doc="Set the prefix of the main and data output files", dtype=str, record='stringin', report_as_string=True)
     LatestFile = pvproperty(value = '', doc="Shows the name of the latest output file retrieved", dtype=str, record='stringin', report_as_string=True)
     LatestFileData = pvproperty(value = '', doc="Shows the name of the latest output data file retrieved", dtype=str, record='stringin', report_as_string=True)
     LatestFileMain = pvproperty(value = '', doc="Shows the name of the latest output main file retrieved", dtype=str, record='stringin', report_as_string=True)
-    SecondsRemaining = pvproperty(value = 0, doc="Shows the seconds remaining for the current exposure", dtype=int, record='longin')
+    SecondsRemaining = pvproperty(value = 0.0, doc="Shows the seconds remaining for the current exposure", dtype=float, record='ai')
 
-    @DetectorState.scan(period=5, use_scan_field=True, subtract_elapsed=True)
+    @DetectorState.scan(period=1, use_scan_field=True, subtract_elapsed=True)
     async def DetectorState(self, instance, async_lib):
         await self.DetectorState.write(self.read_detector_configuration_safely("state", "unknown"))
 
@@ -268,30 +288,49 @@ class DEigerIOC(PVGroup):
 
     @Initialize.putter
     async def Initialize(self, instance, value: bool):
-        value=bool(value)
         # await self.ReadyToTrigger.write(False)
         if value:
             await self.Initialize_RBV.write(True)
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.restart_and_initialize_detector)
-            await loop.run_in_executor(None, self.configure_detector)
-            value=False
+            print('Initializer running self.initialize_detector')
+            await loop.run_in_executor(None, self.initialize_detector)
+            # print('Initializer running self.configure_detector')
+            # await loop.run_in_executor(None, self.configure_detector)
             await self.Initialize_RBV.write(False)
+
+    @Configure.putter
+    async def Configure(self, instance, value: bool):
+        if value:
+            await self.Configure_RBV.write(True)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.configure_detector)
+            await self.Configure_RBV.write(False)
+
+    @Restart.putter
+    async def Restart(self, instance, value: bool):
+        if value:
+            await self.Restart_RBV.write(True)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.restart_detector)
+            await self.Restart_RBV.write(False)
 
     @Trigger.putter
     async def Trigger(self, instance, value: bool):
-        value=bool(value)
         if value:
             await self.Trigger_RBV.write(True)
             # await self.ReadyToTrigger.write(False)
             # ensure initialisation is complete first..
+            print('running wait_for_init_complete()')
             await self.wait_for_init_complete()
             loop = asyncio.get_event_loop()
+            print('arming, triggering, disarming detector')
             await loop.run_in_executor(None, self.client.sendDetectorCommand, "arm")
             self._starttime = datetime.now(timezone.utc)
             await loop.run_in_executor(None, self.client.sendDetectorCommand, "trigger") # can this be done with await? it's not an async function...
             await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
+            print('retrieving files')
             await loop.run_in_executor(None, self.retrieve_all_and_clear_files)
+            print('done retrieving files')
             await self.Trigger_RBV.write(False)
             
 def main(args=None):
