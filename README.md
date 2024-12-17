@@ -1,6 +1,6 @@
 # Dectris Eiger IOC
 
-This repository provides a simple caproto-based IOC (Input/Output Controller) used for setting, triggering, and collecting data to files from Dectris Eiger detectors. This controller is designed to be flexible and customizable for use in different operational settings. For the moment, only internally triggered series capture is supported. 
+This repository provides a simple caproto-based IOC (Input/Output Controller) used for setting, triggering, and collecting data to files from Dectris Eiger detectors. This controller is designed to be flexible and customizable for use in different operational settings. For the moment, only internally triggered series capture is supported. It has been tested on a Dectris Eiger R 1M
 
 ## Project Structure
 
@@ -96,6 +96,40 @@ from ioc import DEigerIOC
 custom_operation = CustomPostExposureOperation()
 ioc = DEigerIOC(custom_post_exposure_operation=custom_operation)
 ```
+
+### Available PVs
+
+The following PVs are available:
+#### Detector state readouts
+  - DetectorState : State of the detector, can be 'idle', 'configuring', 'initializing', 'na', 'error' or 'unknown' 
+  - DetectorTemperature : Temperature of the detector board (there are many more temperature readouts available in the metadata)
+  - DetectorTime : Timestamp on the detector
+  - CountTime_RBV : Gets the actual total exposure time the detector (not working yet)
+  - FrameTime_RBV : Gets the actual frame time from the detector
+
+#### settables for the detector
+  - ThresholdEnergy : Sets the energy threshold for the detector, normally 0.5 * PhotonEnergy
+  - PhotonEnergy : Sets the photon energy for the detector
+  - FrameTime : Sets the frame time for the detector. nominally should be <= CountTime
+  - CountTime : Sets the total exposure time
+  - CountRateCorrection : do you want count rate correction applied by the detector (using int maths)", record='bi')
+  - FlatFieldCorrection : do you want flat field correction applied by the detector (using int maths)", record='bi')
+  - PixelMaskCorrection : do you want pixel mask correction applied by the detector
+
+#### operating the detector
+  - Restart : Restart the detector, resets to False immediately
+  - Restart_RBV : True while detector is restarting
+  - Initialize : Initialize the detector, resets to False immediately
+  - Initialize_RBV : True while detector is initializing
+  - Configure : Configures the detector, resets to False immediately
+  - Configure_RBV : True while detector is Configuring
+  - Trigger : Trigger the detector to take an image, resets to False immediately. Adjusts detector_state to 'busy' for the duration of the measurement.
+  - Trigger_RBV : True while the detector capture subroutine in the IOC is busy
+  - OutputFilePrefix : Set the prefix of the main and data output files
+  - LatestFile : Shows the name of the latest output file retrieved
+  - LatestFileData : Shows the name of the latest output data file retrieved
+  - LatestFileMain : Shows the name of the latest output main file retrieved
+  - SecondsRemaining : Shows the seconds remaining for the current exposure
 
 ## Contributing
 
