@@ -14,7 +14,7 @@ This repository provides a simple caproto-based IOC (Input/Output Controller) us
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.11 or higher
 - Required Python packages (as listed in `requirements.txt` or installable via an appropriate package manager).
 
 ### Setup
@@ -40,7 +40,48 @@ python main.py --host <IP_ADDRESS> --port <PORT_NUMBER> --localPath <PATH>
 
 - `--host`: The IP address of the Dectris Eiger detector.
 - `--port`: The port number for communication with the detector. 80 by default.
-- `--localPath`: The directory path where files will be stored locally after data collection.
+- `--localPath`: The directory path where files will be (retrieved and) stored locally after data collection.
+
+To start a capture, you can use the following (granular) steps:
+1. Restart the detector, changes DetectorState to 'na' or 'unknown', and resets internal exposure ID counter. Should only have to be done infrequently.
+```bash
+caproto-put <prefix:>Restart True 
+captoro-get <prefix:>Restart_RBV
+```
+RBV value will return to False/Off when restart is complete.
+
+2. Iniitalize the detector, should change DetectorState to 'idle'
+```bash
+caproto-put <prefix:>Initialize True
+captoro-get <prefix:>Initialize_RBV
+```
+RBV value will return to False/Off when initialization is complete, might take a few seconds. 
+
+3. Change detector and timing parameters as required
+```bash
+caproto-put <prefix:>CountTime 3.1234
+caproto-put <prefix:>FrameTime 1
+caproto-put <prefix:>PhotonEnergy 8050
+caproto-put <prefix:>ThresholdEnergy 4025
+...
+```
+
+4. Configure the detector parameters, applies all the settings to the detector and filewriter settings. This should be done after every parameter change
+```bash
+caproto-put <prefix:>Configure True
+captoro-get <prefix:>Configure_RBV
+```
+RBV value will return to False/Off when configuration is complete, might take a few seconds. 
+
+
+5. Trigger an exposure. After exposure is complete, this will retrieve the files into the location you specified. 
+```bash
+caproto-put <prefix:>Trigger True
+captoro-get <prefix:>Trigger_RBV
+```
+RBV value will return to False/Off when exposure and file retrieval is complete. 
+
+
 
 ### Custom Operations
 
