@@ -12,6 +12,7 @@ import asyncio
 from validators import validate_ip_address, validate_port_number, ensure_directory_exists_and_is_writeable
 from custom_operations import CustomPostExposureOperation
 import time
+from typing import Callable
 
 import logging
 
@@ -26,6 +27,8 @@ class DEigerIOC(PVGroup):
     This class facilitates setting, triggering, and collecting data from Dectris Eiger detectors.
     It integrates network configuration, data handling, and detector management by wrapping
     various detector functionalities including energy values, timing configuration, and file writing.
+    
+    See README.md for information on how to use it. 
 
     Attributes:
         host (str): IP address of the detector.
@@ -35,16 +38,6 @@ class DEigerIOC(PVGroup):
         _nframes (int): Number of frames to be taken in a single exposure.
         _starttime (datetime): Start time of the exposure.
         
-    Methods:
-        empty_data_store: Clears the detector's data store.
-        restart_and_initialize_detector: Restarts and initializes the detector.
-        set_energy_values: Sets photon energy and energy threshold values.
-        set_timing_values: Configures count time and frame time for the detector.
-        set_filewriter_config: Enables and configures the file writer for data output.
-        set_monitor_and_stream_config: Configures monitor and stream settings.
-        configure_detector: Runs required initializations before a measurement.
-        read_detector_configuration_safely: Reads detector configuration safely while handling errors.
-
     authors: Brian R. Pauw, Anja Hörmann. 
     DEigerClient from Dectris
     License: MIT    
@@ -54,7 +47,7 @@ class DEigerIOC(PVGroup):
     port: int = attrs.field(default=80, validator=validate_port_number, converter=int)
     client: DEigerClient = attrs.field(init=False, validator=attrs.validators.optional(attrs.validators.instance_of(DEigerClient)))
     # files measured on the detector are stored here. 
-    LocalFileDumpPath: Path = attrs.field(default=Path("/tmp"), validator=[attrs.validators.instance_of(Path), ensure_directory_exists_and_is_writeable])
+    LocalFileDumpPath: Path = attrs.field(default=Path("/tmp"), converter=Path, validator=[attrs.validators.instance_of(Path), ensure_directory_exists_and_is_writeable])
     # number of frames to be taken in a single exposure
     _nframes: int = attrs.field(default=1, validator=attrs.validators.optional(attrs.validators.instance_of(int)))
     _nimages_per_file:int = attrs.field(default=1800, validator=attrs.validators.instance_of(int))
@@ -63,7 +56,6 @@ class DEigerIOC(PVGroup):
     # for any location-specific operations that need to be performed after data collection
     custom_post_exposure_operation: CustomPostExposureOperation = attrs.field(factory=CustomPostExposureOperation)
     # if we tried writing while the detector was initializing or measuring:
-    # _parameters_not_applied:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
     _detector_initialized:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
     _detector_configured:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
 
@@ -72,11 +64,12 @@ class DEigerIOC(PVGroup):
             if k in ['host', 'port']:
                 setattr(self, k, kwargs.pop(k))
         self.LocalFileDumpPath = kwargs.pop('localPath', Path("/tmp"))
+        print(f'{self.LocalFileDumpPath=}')
         self.client = DEigerClient(self.host, port=self.port)
-        super().__init__(*args, **kwargs)
         self._starttime = None #datetime.now(timezone.utc)
         self._nimages_per_file = 1800
         self._detector_initialized = False
+        super().__init__(*args, **kwargs)
 
     def empty_data_store(self):
         self.client.sendFileWriterCommand("clear")
@@ -125,9 +118,8 @@ class DEigerIOC(PVGroup):
         """ this also sets _nframes to the correct value"""
         print("count_time to be set: ", CountTime)
         self.client.setDetectorConfig("count_time", CountTime)
-        # don't set the frame time longer than count time.. 
         print("frame_time to be set: ", FrameTime)
-        self.client.setDetectorConfig("frame_time", FrameTime) # np.minimum(self.FrameTime.value, self.CountTime.value))
+        self.client.setDetectorConfig("frame_time", FrameTime) 
         # maybe something else needs to be added here to account for deadtime between frames. 
         self._nframes = int(np.ceil(CountTime/ FrameTime))
         self.client.setDetectorConfig("nimages",self._nframes)
@@ -162,10 +154,14 @@ class DEigerIOC(PVGroup):
         self.client.setDetectorConfig("flatfield_correction_applied", self.FlatFieldCorrection.value)
         self.client.setDetectorConfig("pixel_mask_applied", self.PixelMaskCorrection.value)        
 
-    def read_detector_configuration_safely(self, key:str="", default=None):
+    def read_detector_configuration_safely(self, key:str="", default=None, readMethod: str = 'detectorStatus'):
         """ reads the detector configuration of a particular key and returns it as a dictionary. Safely handles errors"""
         try:
-            answer = self.client.detectorStatus(key)
+            if readMethod == 'detectorStatus':
+                answer = self.client.detectorStatus(key)
+            else: 
+                answer = self.client.detectorConfig(key)
+
             if not isinstance(answer, dict):
                 return default
             else:
@@ -177,13 +173,12 @@ class DEigerIOC(PVGroup):
         """ reads all files in the data store and dumps them to disk at the location specified upon IOC init"""
 
         expected_number_of_files = np.ceil(self._nframes/self._nimages_per_file)+1
-        # TODO: check how this writes files during measurememnt - does it update as files are created, or does it create files only on completion?
         
         filenames = self.client.fileWriterFiles()# returns all files in datastore
         ntry = 200 # 20 seconds...
         while not len(filenames)>=expected_number_of_files:
             time.sleep(.1)
-            filenames = self.client.fileWriterFiles()#['value'] # returns all files in datastore
+            filenames = self.client.fileWriterFiles() #['value'] # returns all files in datastore
             if ntry <0:
                 print('did not find the needed number of files after 20 seconds')
                 return 
@@ -191,7 +186,7 @@ class DEigerIOC(PVGroup):
 
         print(f'filenames found: {filenames}')
         for filename in filenames:
-            if filename in os.listdir(self.LocalFileDumpPath) or not filename.startswith(self.OutputFilePrefix.value):
+            if (filename in os.listdir(self.LocalFileDumpPath)) or not filename.startswith(self.OutputFilePrefix.value):
                 continue # skip if file already exists or is one we're not looking for
             print(f'retrieving: {filename}')
             self.client.fileWriterSave(filename, self.LocalFileDumpPath)
@@ -259,15 +254,15 @@ class DEigerIOC(PVGroup):
 
     @DetectorState.scan(period=1, use_scan_field=True, subtract_elapsed=True)
     async def DetectorState(self, instance, async_lib):
-        await self.DetectorState.write(self.read_detector_configuration_safely("state", "unknown"))
+        await self.DetectorState.write(self.read_detector_configuration_safely("state", "unknown", readMethod='detectorStatus'))
 
     @DetectorTemperature.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def DetectorTemperature(self, instance, async_lib):
-        await self.DetectorTemperature.write(float(self.read_detector_configuration_safely("board_000/th0_temp", -999.0)))
+        await self.DetectorTemperature.write(float(self.read_detector_configuration_safely("board_000/th0_temp", -999.0, readMethod='detectorStatus')))
 
     @DetectorTime.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def DetectorTime(self, instance, async_lib):
-        await self.DetectorTime.write(self.read_detector_configuration_safely("time", "unknown"))
+        await self.DetectorTime.write(self.read_detector_configuration_safely("time", "unknown", readMethod='detectorStatus'))
 
     @SecondsRemaining.scan(period=1, use_scan_field=True, subtract_elapsed=True)
     async def SecondsRemaining(self, instance, async_lib):
@@ -280,11 +275,20 @@ class DEigerIOC(PVGroup):
 
     @CountTime_RBV.getter
     async def CountTime_RBV(self, instance):
-        await self.CountTime_RBV.write(self.read_detector_configuration_safely("count_time", -999.0))
+        await self.CountTime_RBV.write(float(self.read_detector_configuration_safely("count_time", -999.0, readMethod='detectorConfig')))
 
     @CountTime.getter
     async def CountTime(self, instance):
-        await self.CountTime_RBV.write(self.read_detector_configuration_safely("count_time", -999.0))
+        await self.CountTime_RBV.write(float(self.read_detector_configuration_safely("count_time", -999.0, readMethod='detectorConfig')))
+
+    @FrameTime_RBV.getter
+    async def FrameTime_RBV(self, instance):
+        await self.FrameTime_RBV.write(float(self.read_detector_configuration_safely("frame_time", -999.0, readMethod='detectorConfig')))
+
+    @FrameTime.getter
+    async def FrameTime(self, instance):
+        await self.FrameTime_RBV.write(float(self.read_detector_configuration_safely("frame_time", -999.0, readMethod='detectorConfig')))
+
 
     @Initialize.putter
     async def Initialize(self, instance, value: bool):
@@ -294,8 +298,6 @@ class DEigerIOC(PVGroup):
             loop = asyncio.get_event_loop()
             print('Initializer running self.initialize_detector')
             await loop.run_in_executor(None, self.initialize_detector)
-            # print('Initializer running self.configure_detector')
-            # await loop.run_in_executor(None, self.configure_detector)
             await self.Initialize_RBV.write(False)
 
     @Configure.putter
@@ -318,15 +320,16 @@ class DEigerIOC(PVGroup):
     async def Trigger(self, instance, value: bool):
         if value:
             await self.Trigger_RBV.write(True)
-            # await self.ReadyToTrigger.write(False)
             # ensure initialisation is complete first..
             print('running wait_for_init_complete()')
             await self.wait_for_init_complete()
             loop = asyncio.get_event_loop()
-            print('arming, triggering, disarming detector')
+            print('arming detector')
             await loop.run_in_executor(None, self.client.sendDetectorCommand, "arm")
             self._starttime = datetime.now(timezone.utc)
-            await loop.run_in_executor(None, self.client.sendDetectorCommand, "trigger") # can this be done with await? it's not an async function...
+            print('triggering detector')
+            await loop.run_in_executor(None, self.client.sendDetectorCommand, "trigger") 
+            print('disarming detector')
             await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
             print('retrieving files')
             await loop.run_in_executor(None, self.retrieve_all_and_clear_files)
@@ -353,7 +356,7 @@ def main(args=None):
 
     ioc_options, run_options = split_args(args)
 
-    ioc = DEigerIOC(host=args.host, port=args.port, **ioc_options)
+    ioc = DEigerIOC(host=args.host, port=args.port, localPath=args.localPath, **ioc_options)
     run(ioc.pvdb, **run_options)
 
 
