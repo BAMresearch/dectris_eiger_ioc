@@ -81,6 +81,7 @@ captoro-get <prefix:>Trigger_RBV
 ```
 RBV value will return to False/Off when exposure and file retrieval is complete. 
 
+You can trigger as many exposures by repeating the last command as needed, as long as the exposure parameters are not changed. The first exposure will take some time as the detector needs to do some housekeeping before (detectorstate "configuring"), but the subsequent exposures will be quicker. 
 
 
 ### Custom Operations
