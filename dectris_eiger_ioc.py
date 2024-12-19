@@ -69,6 +69,7 @@ class DEigerIOC(PVGroup):
         self._starttime = None #datetime.now(timezone.utc)
         self._nimages_per_file = 1800
         self._detector_initialized = False
+        self._nframes = 0
         super().__init__(*args, **kwargs)
 
     def empty_data_store(self):
@@ -220,6 +221,46 @@ class DEigerIOC(PVGroup):
             if (counter % 10 == 0):
                 print('waiting for configuration to complete...')
 
+    async def arm_trigger_disarm(self):
+        print('arming detector')
+        counter = 0  
+        loop = asyncio.get_event_loop()
+        # await loop.run_in_executor(None, self.initialize_detector)
+        while counter <10:
+            counter += 1
+            try:
+                arm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "arm")
+                print(f'{arm_answer =}')
+                break # done if we got to this stage
+            except RuntimeError:
+                print(f'trouble arming detector in attempt {counter}, waiting a second before trying again')
+                await asyncio.sleep(1)
+
+        print('triggering detector')
+        counter = 0
+        self._starttime = datetime.now(timezone.utc)
+        while counter <10:
+            counter += 1
+            try:
+                trigger_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "trigger")
+                print(f'{trigger_answer =}')
+                break # done if we got to this stage
+            except RuntimeError:
+                print(f'trouble triggering detector in attempt {counter}, waiting a second before trying again')
+                await asyncio.sleep(1)
+        print('disarming detector')
+        counter = 0
+        while counter <10:
+            counter += 1
+            try:
+                disarm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
+                print(f'{disarm_answer =}')
+                break # done if we got to this stage
+            except RuntimeError:
+                print(f'trouble disarming detector in attempt {counter}, waiting a second before trying again')
+                await asyncio.sleep(1)
+
+
     # Detector state readouts
     DetectorState = pvproperty(value = '', doc="State of the detector, can be 'busy' or 'idle'", dtype=str, record='stringin',
                                report_as_string=True)
@@ -324,13 +365,7 @@ class DEigerIOC(PVGroup):
             print('running wait_for_init_complete()')
             await self.wait_for_init_complete()
             loop = asyncio.get_event_loop()
-            print('arming detector')
-            await loop.run_in_executor(None, self.client.sendDetectorCommand, "arm")
-            self._starttime = datetime.now(timezone.utc)
-            print('triggering detector')
-            await loop.run_in_executor(None, self.client.sendDetectorCommand, "trigger") 
-            print('disarming detector')
-            await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
+            await self.arm_trigger_disarm()
             print('retrieving files')
             await loop.run_in_executor(None, self.retrieve_all_and_clear_files)
             print('done retrieving files')
