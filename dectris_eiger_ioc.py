@@ -203,23 +203,41 @@ class DEigerIOC(PVGroup):
         self.empty_data_store()
 
     async def wait_for_init_complete(self):
-        counter = 0
-        if self.DetectorState.value in ['na', 'error']:
+        reconfigure = False
+        if self.DetectorState.value in ['error']:
+            print('error state detected in detector, restarting before reinitializing...')
+            await self.Restart.write(True)
+            await asyncio.sleep(2)
+            reconfigure = True
+
+        if self.DetectorState.value in ['na', 'error', 'ready']:
             print('error state detected in detector, reinitializing before triggering...')
             await self.Initialize.write(True)
             await asyncio.sleep(.1)
+            reconfigure = True
             
+        counter = 0
         while self.Initialize_RBV.value not in ['Off', False]:
             counter += 1
             await asyncio.sleep(.1)
             if (counter % 10 == 0):
                 print('waiting for initialization to complete...')
+            if counter>250:
+                break
 
+        if reconfigure: 
+            await self.Configure.write(True)
+            await asyncio.sleep(.1)
+            reconfigure = False
+
+        counter = 0
         while self.Configure_RBV.value not in ['Off', False]:
             counter += 1
             await asyncio.sleep(.1)
             if (counter % 10 == 0):
                 print('waiting for configuration to complete...')
+            if counter>250:
+                break
 
     async def arm_trigger_disarm(self):
         print('arming detector')
