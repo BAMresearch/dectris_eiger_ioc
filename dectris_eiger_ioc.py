@@ -188,7 +188,7 @@ class DEigerIOC(PVGroup):
         expected_number_of_files = np.ceil(self._nframes/self._nimages_per_file)+1
         
         filenames = self.client.fileWriterFiles()# returns all files in datastore
-        ntry = 200 # 20 seconds...
+        ntry = 250 # 25 seconds...
         while not len(filenames)>=expected_number_of_files:
             time.sleep(.1)
             filenames = self.client.fileWriterFiles() #['value'] # returns all files in datastore
@@ -256,7 +256,7 @@ class DEigerIOC(PVGroup):
         counter = 0  
         loop = asyncio.get_event_loop()
         # await loop.run_in_executor(None, self.initialize_detector)
-        while counter <10:
+        while counter <20: # can take up to 20 seconds
             counter += 1
             try:
                 await asyncio.sleep(.1)
@@ -273,7 +273,7 @@ class DEigerIOC(PVGroup):
         print('triggering detector')
         counter = 0
         self._starttime = datetime.now(timezone.utc)
-        while counter <10:
+        while counter <20:
             counter += 1
             try:
                 # do not lock this or we'll be stuck for the duration of the exposure
@@ -289,7 +289,7 @@ class DEigerIOC(PVGroup):
                 await asyncio.sleep(1)
         print('disarming detector')
         counter = 0
-        while counter <10:
+        while counter <20:
             counter += 1
             try:
                 await asyncio.sleep(.1)
