@@ -249,7 +249,7 @@ class DEigerIOC(PVGroup):
         while counter <10:
             counter += 1
             try:
-                asyncio.sleep(.1)
+                await asyncio.sleep(.1)
                 async with self._communications_lock:
                     arm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "arm")
                 print(f'{arm_answer =}')
@@ -268,7 +268,7 @@ class DEigerIOC(PVGroup):
             try:
                 # do not lock this or we'll be stuck for the duration of the exposure
                 # async with self._communications_lock:
-                asyncio.sleep(.3)
+                await asyncio.sleep(.5)
                 trigger_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "trigger")
                 print(f'{trigger_answer =}')
                 if isinstance(trigger_answer, dict):
@@ -282,7 +282,7 @@ class DEigerIOC(PVGroup):
         while counter <10:
             counter += 1
             try:
-                asyncio.sleep(.1)
+                await asyncio.sleep(.1)
                 async with self._communications_lock:
                     disarm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
                 print(f'{disarm_answer =}')
