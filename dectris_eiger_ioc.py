@@ -58,6 +58,7 @@ class DEigerIOC(PVGroup):
     # if we tried writing while the detector was initializing or measuring:
     _detector_initialized:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
     _detector_configured:bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
+    _communications_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
 
     def __init__(self, *args, **kwargs) -> None:
         for k in list(kwargs.keys()):
@@ -69,6 +70,7 @@ class DEigerIOC(PVGroup):
         self._starttime = None #datetime.now(timezone.utc)
         self._nimages_per_file = 1800
         self._detector_initialized = False
+        self._communications_lock = asyncio.Lock()
         self._nframes = 0
         super().__init__(*args, **kwargs)
 
@@ -247,9 +249,13 @@ class DEigerIOC(PVGroup):
         while counter <10:
             counter += 1
             try:
-                arm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "arm")
+                asyncio.sleep(.1)
+                async with self._communications_lock:
+                    arm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "arm")
                 print(f'{arm_answer =}')
-                break # done if we got to this stage
+                if isinstance(arm_answer, dict):
+                    if arm_answer.get('sequence id', -1) >= 0:
+                        break # correct response, done if we got to this stage
             except RuntimeError:
                 print(f'trouble arming detector in attempt {counter}, waiting a second before trying again')
                 await asyncio.sleep(1)
@@ -260,9 +266,14 @@ class DEigerIOC(PVGroup):
         while counter <10:
             counter += 1
             try:
+                # do not lock this or we'll be stuck for the duration of the exposure
+                # async with self._communications_lock:
+                asyncio.sleep(.3)
                 trigger_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "trigger")
                 print(f'{trigger_answer =}')
-                break # done if we got to this stage
+                if isinstance(trigger_answer, dict):
+                    if trigger_answer.get('sequence id', 0) == -1:
+                        break # correct response, done if we got to this stage
             except RuntimeError:
                 print(f'trouble triggering detector in attempt {counter}, waiting a second before trying again')
                 await asyncio.sleep(1)
@@ -271,9 +282,13 @@ class DEigerIOC(PVGroup):
         while counter <10:
             counter += 1
             try:
-                disarm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
+                asyncio.sleep(.1)
+                async with self._communications_lock:
+                    disarm_answer = await loop.run_in_executor(None, self.client.sendDetectorCommand, "disarm")
                 print(f'{disarm_answer =}')
-                break # done if we got to this stage
+                if isinstance(disarm_answer, dict):
+                    if disarm_answer.get('sequence id', -1) >= 0:
+                        break # correct response, done if we got to this stage
             except RuntimeError:
                 print(f'trouble disarming detector in attempt {counter}, waiting a second before trying again')
                 await asyncio.sleep(1)
@@ -311,17 +326,15 @@ class DEigerIOC(PVGroup):
     LatestFileMain = pvproperty(value = '', doc="Shows the name of the latest output main file retrieved", dtype=str, record='stringin', report_as_string=True)
     SecondsRemaining = pvproperty(value = 0.0, doc="Shows the seconds remaining for the current exposure", dtype=float, record='ai')
 
-    @DetectorState.scan(period=1, use_scan_field=True, subtract_elapsed=True)
+    @DetectorState.scan(period=5, use_scan_field=True, subtract_elapsed=True)
     async def DetectorState(self, instance, async_lib):
-        await self.DetectorState.write(self.read_detector_configuration_safely("state", "unknown", readMethod='detectorStatus'))
+        async with self._communications_lock:
+            await self.DetectorState.write(self.read_detector_configuration_safely("state", "unknown", readMethod='detectorStatus'))
 
-    @DetectorTemperature.scan(period=5, use_scan_field=True, subtract_elapsed=True)
+    @DetectorTemperature.scan(period=60, use_scan_field=True, subtract_elapsed=True)
     async def DetectorTemperature(self, instance, async_lib):
-        await self.DetectorTemperature.write(float(self.read_detector_configuration_safely("board_000/th0_temp", -999.0, readMethod='detectorStatus')))
-
-    @DetectorTime.scan(period=5, use_scan_field=True, subtract_elapsed=True)
-    async def DetectorTime(self, instance, async_lib):
-        await self.DetectorTime.write(self.read_detector_configuration_safely("time", "unknown", readMethod='detectorStatus'))
+        async with self._communications_lock:
+            await self.DetectorTemperature.write(float(self.read_detector_configuration_safely("board_000/th0_temp", -999.0, readMethod='detectorStatus')))
 
     @SecondsRemaining.scan(period=1, use_scan_field=True, subtract_elapsed=True)
     async def SecondsRemaining(self, instance, async_lib):
@@ -332,21 +345,30 @@ class DEigerIOC(PVGroup):
         else:
             await self.SecondsRemaining.write(-999)
 
+    @DetectorTime.getter
+    async def DetectorTime(self, instance, async_lib):
+        async with self._communications_lock:
+            await self.DetectorTime.write(self.read_detector_configuration_safely("time", "unknown", readMethod='detectorStatus'))
+
     @CountTime_RBV.getter
     async def CountTime_RBV(self, instance):
-        await self.CountTime_RBV.write(float(self.read_detector_configuration_safely("count_time", -999.0, readMethod='detectorConfig')))
+        async with self._communications_lock:
+            await self.CountTime_RBV.write(float(self.read_detector_configuration_safely("count_time", -999.0, readMethod='detectorConfig')))
 
     @CountTime.getter
     async def CountTime(self, instance):
-        await self.CountTime_RBV.write(float(self.read_detector_configuration_safely("count_time", -999.0, readMethod='detectorConfig')))
+        async with self._communications_lock:
+            await self.CountTime_RBV.write(float(self.read_detector_configuration_safely("count_time", -999.0, readMethod='detectorConfig')))
 
     @FrameTime_RBV.getter
     async def FrameTime_RBV(self, instance):
-        await self.FrameTime_RBV.write(float(self.read_detector_configuration_safely("frame_time", -999.0, readMethod='detectorConfig')))
+        async with self._communications_lock:
+            await self.FrameTime_RBV.write(float(self.read_detector_configuration_safely("frame_time", -999.0, readMethod='detectorConfig')))
 
     @FrameTime.getter
     async def FrameTime(self, instance):
-        await self.FrameTime_RBV.write(float(self.read_detector_configuration_safely("frame_time", -999.0, readMethod='detectorConfig')))
+        async with self._communications_lock:
+            await self.FrameTime_RBV.write(float(self.read_detector_configuration_safely("frame_time", -999.0, readMethod='detectorConfig')))
 
 
     @Initialize.putter
@@ -356,7 +378,8 @@ class DEigerIOC(PVGroup):
             await self.Initialize_RBV.write(True)
             loop = asyncio.get_event_loop()
             print('Initializer running self.initialize_detector')
-            await loop.run_in_executor(None, self.initialize_detector)
+            async with self._communications_lock:
+                await loop.run_in_executor(None, self.initialize_detector)
             await self.Initialize_RBV.write(False)
 
     @Configure.putter
@@ -364,7 +387,8 @@ class DEigerIOC(PVGroup):
         if value:
             await self.Configure_RBV.write(True)
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.configure_detector)
+            async with self._communications_lock:
+                await loop.run_in_executor(None, self.configure_detector)
             await self.Configure_RBV.write(False)
 
     @Restart.putter
@@ -372,7 +396,8 @@ class DEigerIOC(PVGroup):
         if value:
             await self.Restart_RBV.write(True)
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.restart_detector)
+            async with self._communications_lock:
+                await loop.run_in_executor(None, self.restart_detector)
             await self.Restart_RBV.write(False)
 
     @Trigger.putter
@@ -383,9 +408,11 @@ class DEigerIOC(PVGroup):
             print('running wait_for_init_complete()')
             await self.wait_for_init_complete()
             loop = asyncio.get_event_loop()
+            # this one has locks in it
             await self.arm_trigger_disarm()
             print('retrieving files')
-            await loop.run_in_executor(None, self.retrieve_all_and_clear_files)
+            async with self._communications_lock:
+                await loop.run_in_executor(None, self.retrieve_all_and_clear_files)
             print('done retrieving files')
             await self.Trigger_RBV.write(False)
             
