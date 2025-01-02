@@ -99,7 +99,13 @@ class DEigerIOC(PVGroup):
             print(f'failure to initialize detector, trying again {ntry} times out of 5')
             print(f'{self.DetectorState.value =}, {Trouble =}')
             time.sleep(1)
-            self.client.sendDetectorCommand("initialize")
+            try:
+                self.client.sendDetectorCommand("initialize")
+                print("  finished sending init command")
+                Trouble=False
+            except RuntimeError as e:
+                print(f"  Trouble initializing, RunTimeError received: {e}")
+                Trouble=True
             ntry -=1
             if ntry <0:
                 print(f'FAILURE TO INITIALIZE detector')
