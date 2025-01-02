@@ -86,21 +86,25 @@ class DEigerIOC(PVGroup):
 
     def initialize_detector(self):
         print("  sending init command")
+        self._detector_initialized = False
         Trouble=False
         try:
             self.client.sendDetectorCommand("initialize")
             print("  finished sending init command")
-        except RuntimeError:
-            print("  Trouble initializing")
+        except RuntimeError as e:
+            print(f"  Trouble initializing, RunTimeError received: {e}")
             Trouble=True
         ntry = 5
         while (self.DetectorState.value in ['na', 'error']) or Trouble:
             print(f'failure to initialize detector, trying again {ntry} times out of 5')
+            print(f'{self.DetectorState.value =}, {Trouble =}')
             time.sleep(1)
             self.client.sendDetectorCommand("initialize")
             ntry -=1
             if ntry <0:
                 print(f'FAILURE TO INITIALIZE detector')
+                return
+                
         self._detector_initialized = True
         return
 
