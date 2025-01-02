@@ -346,7 +346,7 @@ class DEigerIOC(PVGroup):
             await self.SecondsRemaining.write(-999)
 
     @DetectorTime.getter
-    async def DetectorTime(self, instance, async_lib):
+    async def DetectorTime(self, instance):
         async with self._communications_lock:
             await self.DetectorTime.write(self.read_detector_configuration_safely("time", "unknown", readMethod='detectorStatus'))
 
